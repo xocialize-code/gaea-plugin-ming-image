@@ -22,10 +22,16 @@ gaea plugins add https://github.com/xocialize-code/gaea-plugin-ming-image
   1248×832. The worker reports the size drawn in `effective`, with `size_snapped`; Gaea then returns the size the
   request asked for. Up to 2048² in area, at most 8:1.
 - **`count`**: 1–8 images, each with `seed + i`. A request without a seed gets one, reported in `effective`.
-- **Options**, as MES extensions: `x-ming.steps` (1–50) and `x-ming.guidance` (1–10, 1 turns CFG off).
+- **Options**, as MES extensions: `x-ming.steps` (1–50), `x-ming.guidance` (1–10, 1 turns CFG off) and
+  `x-ming.background` (below).
+- **Transparent backgrounds** (0.2.0): `x-ming.background: "transparent"` draws the design on native alpha and returns a
+  straight-alpha PNG, for stickers, logos and overlays. The package prepends its measured phrase, retries once at the same
+  seed with a second phrase when the first image comes back opaque (about twice the time), and floors α below 0.1 to 0.
+  The worker checks every image by the package's gate metric (more than 10% of pixels with α ≤ 12), and one that is still
+  opaque carries the warning `background_opaque`. Scenes that fill the frame do; so, sometimes, does glass. `image.matte`
+  can cut a subject out of such an image.
 - **Negative prompts** do nothing (`negative_prompt_ignored`): the model conditions on the prompt alone.
-- **Not offered yet:** native transparent backgrounds (the package's `background: transparent`) and the Design-Layer
-  checkpoint's layer decomposition. MES has no parameter or operation for them yet.
+- **Not offered yet:** the Design-Layer checkpoint's layer decomposition. No MES operation returns an image's layers yet.
 
 ## Lanes and memory
 

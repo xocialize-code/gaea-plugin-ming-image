@@ -9,10 +9,12 @@ import MingPlugin
 // image is written to --out, and one JSON line of timings is printed. Not part of the plugin bundle.
 //
 //   ming-inproc [--lane int8 | bf16 | int4] [--prompt <text>] [--width 1024] [--height 1024] [--steps 12]
-//               [--guidance 1] [--seed 42] [--models-root <dir>] [--out <png>] [--once]
+//               [--guidance 1] [--seed 42] [--background opaque | transparent] [--models-root <dir>] [--out <png>]
+//               [--once]
 //
 // The width and height are the request's; the package draws its bucket's size, as through the worker. --once runs
-// one job, for measuring (and the first run of a lane downloads its tier into the models root).
+// one job, for measuring (and the first run of a lane downloads its tier into the models root). "transparent" in the
+// JSON line says whether the first image has native alpha, by the test the worker applies.
 
 var args = Array(CommandLine.arguments.dropFirst())
 func option(_ name: String) -> String? {
@@ -33,6 +35,7 @@ let height = Int(option("--height") ?? "") ?? 1024
 let steps = Int(option("--steps") ?? "") ?? defaultSteps
 let guidance = Double(option("--guidance") ?? "") ?? defaultGuidance
 let seed = UInt64(option("--seed") ?? "") ?? 42
+let background: T2IBackground? = option("--background") == "transparent" ? .transparent : nil
 let once = args.contains("--once")
 let outPath = option("--out")
 let modelsRoot = URL(fileURLWithPath: option("--models-root")
@@ -40,7 +43,7 @@ let modelsRoot = URL(fileURLWithPath: option("--models-root")
 
 let size = try drawnSize((width, height))
 var result: [String: Any] = ["model": modelID, "lane": quant.rawValue, "width": width, "height": height, "steps": steps,
-                             "guidance": guidance, "seed": seed]
+                             "guidance": guidance, "seed": seed, "background": background == .transparent ? "transparent" : "opaque"]
 
 // The budget Gaea sends a worker on a large Mac (wiresWeights off, the automatic pool cap).
 let engine = MLXServeEngine(workerBudget: WorkerBudget(ceilingBytes: 64_000_000_000, wiresWeights: false))
@@ -53,7 +56,7 @@ _ = try await engine.prepare(.textToImage, package: id)
 result["prepare_s"] = seconds(since: clock)
 
 let request = T2IRequest(prompt: prompt, width: size.request.width, height: size.request.height, steps: steps,
-                         guidanceScale: guidance, seed: seed)
+                         guidanceScale: guidance, seed: seed, background: background)
 for run in once ? ["run1"] : ["run1", "run2"] {
     clock = ContinuousClock.now
     let response = try await engine.run(request, package: id)
@@ -61,6 +64,7 @@ for run in once ? ["run1"] : ["run1", "run2"] {
     if run == "run1", let image = (response as? T2IResponse)?.image {
         result["out_width"] = image.width
         result["out_height"] = image.height
+        result["transparent"] = hasNativeAlpha(png: image.data)
         if let outPath { try image.data.write(to: URL(fileURLWithPath: outPath)) }
     }
 }

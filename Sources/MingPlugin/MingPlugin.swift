@@ -1,4 +1,6 @@
+import CoreGraphics
 import Foundation
+import ImageIO
 import GaeaPluginKit
 import GaeaProtocol
 import MLXMingImage
@@ -18,8 +20,12 @@ import MingImage
 // it, at the bucket's nearest aspect, then resized to cover the requested aspect. So the size drawn is the bucket's,
 // not the one asked; it is reported in `effective`, with `size_snapped` when it differs. Up to 2048² in area.
 //
-// Not offered yet: native transparent backgrounds (the package's `background: transparent`) and the Design-Layer
-// checkpoint's layer decomposition, which have no MES parameter or operation (AB-T-0388).
+// `x-ming.background: transparent` asks for native alpha (the package's `background: .transparent`): the measured
+// phrase, a retry at the same seed when the first comes back opaque, and an alpha floor. The output is a straight-alpha
+// PNG. Glass and other transparent subjects can still come back opaque, so every image is checked, and one without alpha
+// carries the warning `background_opaque` (Base §10.1 lets an engine use a code no registry defines).
+//
+// Not offered yet: the Design-Layer checkpoint's layer decomposition, which no MES operation describes (AB-T-0388).
 
 public let modelID = "ming-image"
 public let maxPixels = 2048 * 2048
@@ -68,8 +74,53 @@ public func drawnSize(_ size: (Int, Int)) throws -> (request: (width: Int, heigh
     return (request, (resized.width, resized.height))
 }
 
-/// MES image.generate: one engine call per image, each with seed + i.
-let generate = EngineOperation("image.generate", outputNames: ["image": "images"]) { job in
+/// Whether a PNG has native alpha by the package's gate metric (`MingNativeAlpha.isTransparent`). The image is drawn the
+/// way ForgeCore's EngineImageCoding draws one, into premultiplied sRGB RGBA8, which leaves alpha exact.
+public func hasNativeAlpha(png: Data) -> Bool {
+    guard let source = CGImageSourceCreateWithData(png as CFData, nil),
+          let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return false }
+    let (w, h) = (image.width, image.height)
+    var rgba = [UInt8](repeating: 0, count: w * h * 4)
+    let drawn = rgba.withUnsafeMutableBytes { buffer -> Bool in
+        guard let ctx = CGContext(data: buffer.baseAddress, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        return true
+    }
+    return drawn && MingNativeAlpha.isTransparent(rgba: rgba)
+}
+
+/// MES image.generate: one engine call per image, each with seed + i. The operation runs its calls itself, so it can
+/// look at each image a transparent request returns.
+let generate = EngineOperation("image.generate") { job, session in
+    let calls = try generateCalls(job)
+    let transparent = job.param("x-ming.background")?.stringValue == "transparent"
+    var outputs: [Output] = []
+    var opaque: [Int] = []
+    for (i, call) in calls.enumerated() {
+        try Task.checkCancellation()
+        guard let image = (try await session.run(call.request) as? T2IResponse)?.image, image.format == .png else {
+            throw GPPError(.modelError, "Ming-Image returned no PNG.")
+        }
+        let url = session.outputDir.appending(path: "image-\(i).png")
+        try image.data.write(to: url)
+        outputs.append(.file("images", url, mediaType: "image/png"))
+        if transparent, !hasNativeAlpha(png: image.data) { opaque.append(i) }
+    }
+    var warnings = calls.first?.warnings ?? []
+    if !opaque.isEmpty {
+        let which = calls.count == 1 ? "The image" : "Image \(opaque.map { String($0 + 1) }.joined(separator: ", ")) of \(calls.count)"
+        warnings.append(Warning(code: "background_opaque",
+                                message: "\(which) came back without a transparent background, after the retry. Scenes that "
+                                    + "fill the frame, and glass, often do; image.matte can cut a subject out.",
+                                param: "x-ming.background"))
+    }
+    return RunResult(outputs: outputs, effective: calls.first?.effective ?? [:], warnings: warnings)
+}
+
+/// The engine calls for an image.generate job, validated: one per image.
+public func generateCalls(_ job: Job) throws -> [EngineCall] {
     guard let prompt = try job.text("prompt"), !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
         throw GPPError(.invalidRequest, "image.generate needs a prompt.")
     }
@@ -81,6 +132,10 @@ let generate = EngineOperation("image.generate", outputNames: ["image": "images"
     guard (1...10).contains(guidance) else { throw GPPError(.invalidRequest, "x-ming.guidance is 1–10.") }
     let count = job.param("count")?.intValue ?? 1
     guard (1...8).contains(count) else { throw GPPError(.invalidRequest, "count is 1–8.") }
+    let background = job.param("x-ming.background")?.stringValue ?? "opaque"
+    guard ["opaque", "transparent"].contains(background) else {
+        throw GPPError(.invalidRequest, "x-ming.background is opaque or transparent.")
+    }
     var warnings: [Warning] = []
     if size.drawn != (asked.0, asked.1) {
         warnings.append(Warning(code: "size_snapped",
@@ -104,9 +159,11 @@ let generate = EngineOperation("image.generate", outputNames: ["image": "images"
         "seed": .int(Int64(seed)), "count": .int(Int64(count)), "x-ming.steps": .int(Int64(steps)),
     ]
     if guidance > 1 { effective["x-ming.guidance"] = .double(guidance) }
+    if background == "transparent" { effective["x-ming.background"] = "transparent" }
     return (0..<count).map { i in
         EngineCall(T2IRequest(prompt: prompt, width: size.request.width, height: size.request.height, steps: steps,
-                              guidanceScale: guidance, seed: seed + UInt64(i)),
+                              guidanceScale: guidance, seed: seed + UInt64(i),
+                              background: background == "transparent" ? .transparent : nil),
                    effective: effective, warnings: warnings)
     }
 }
@@ -128,6 +185,12 @@ let params: JSONValue = [
             "description": "Classifier-free guidance. The Design profile runs without it (1).",
             "x-mes-ui": ["widget": "slider", "label": "Guidance", "advanced": true],
         ],
+        "x-ming.background": [
+            "type": "string", "enum": ["opaque", "transparent"], "default": "opaque",
+            "description": .string("transparent draws the design on native alpha: a straight-alpha PNG, for stickers, "
+                + "logos and overlays. An image that still comes back opaque carries the warning background_opaque."),
+            "x-mes-ui": ["widget": "picker", "label": "Background"],
+        ],
     ],
     "additionalProperties": false,
 ]
@@ -137,13 +200,14 @@ let offerModel: JSONValue = [
     "license": ["spdx": "MIT", "commercial_use": true, "terms_url": "https://huggingface.co/inclusionAI/Ming-Image-0.1-Design"],
     "memory_class": "large", "speed_class": "standard", "quality_tiers": ["standard", "best"],
     "notes": .string("A design model: posters, signage, layouts and legible text, from natural language or a JSON layer schema. "
-        + "Drawn in its 1024² or 2048² bucket at the requested aspect (the size drawn is reported). Not for exact "
-        + "operational text; negative prompts do nothing."),
+        + "Drawn in its 1024² or 2048² bucket at the requested aspect (the size drawn is reported). "
+        + "x-ming.background: transparent gives native alpha; glass and see-through subjects may still come back opaque. "
+        + "Not for exact operational text; negative prompts do nothing."),
 ]
 
 public let mingPlugin = GaeaPluginDefinition(
     id: "com.xocialize.gaea.ming-image",
-    version: "0.1.0",
+    version: "0.2.0",
     minGaea: "0.7.0",
     team: "CFZS6RXUCP",
     repo: "https://github.com/xocialize-code/gaea-plugin-ming-image",
