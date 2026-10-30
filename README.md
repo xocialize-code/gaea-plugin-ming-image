@@ -31,7 +31,23 @@ gaea plugins add https://github.com/xocialize-code/gaea-plugin-ming-image
   opaque carries the warning `background_opaque`. Scenes that fill the frame do; so, sometimes, does glass. `image.matte`
   can cut a subject out of such an image.
 - **Negative prompts** do nothing (`negative_prompt_ignored`): the model conditions on the prompt alone.
-- **Not offered yet:** the Design-Layer checkpoint's layer decomposition. No MES operation returns an image's layers yet.
+
+### Layers: `ming-image-layer` (0.3.0)
+
+| Model | MES operation | Quality tiers | Notes |
+|---|---|---|---|
+| `ming-image-layer` | `image.decompose` | draft, standard, best | Ming-Image 0.1 Design-Layer: a flat design into up to 12 straight-alpha RGBA layers, front-most first, plus its own composite. 12 steps, guidance 2 (the reference's Layer profile). |
+
+- **The plan** is the prompt, front-most first: "Decompose this image into 3 layers. Layer 1: the words … Layer 2: the
+  saxophone … Layer 3: the background." Without one the model chooses, and its split is much rougher: on the jazz
+  poster, 4 unplanned layers repeated the saxophone and left one nearly empty, where a 3-layer plan gave the headline,
+  the saxophone and the background, one each.
+- **`layer_count`**: 1–12 (`limits.max_layer_count`). A plan's stated count must agree with it. Without either, the
+  package makes 4 layers, or 5 with a plan that states none; `effective.layer_count` says how many came back.
+- **Sizes.** The package works at the input's aspect in its 1024 bucket, or 512 at `quality: draft` (`resolution` in
+  `effective`), and returns that size. Gaea's normalizer brings the layers to the input's size.
+- **`outputs`**: `layers`, and `composite` on request (`supports.composite`).
+- **Speed:** about 6 minutes for 4 layers at 1024 (int8 or bf16) and about a minute at 512, on an M5 Max.
 
 ## Lanes and memory
 

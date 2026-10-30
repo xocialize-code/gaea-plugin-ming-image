@@ -10,6 +10,10 @@
 # 1248×832), int4 at 1024², and x-ming.background: transparent at 1024² and 1280×720, on a glass subject, and on a
 # full-bleed scene (which comes back opaque). A transparent case also checks the worker warns background_opaque exactly
 # when the in-process image has no alpha.
+#
+# Decompose cases (ming-image-layer): the 1024² poster into 4 layers at 1024 and at 512 (draft) on int8 and at 512 on
+# int4, with a 3-layer plan, and the 1280×720 poster at its aspect; every layer and the composite compared file by file.
+# A decompose takes minutes (about 6 at 1024, 2 at 512), so the in-process side runs once.
 set -uo pipefail
 ROOT=${0:A:h:h}
 cd $ROOT
@@ -63,6 +67,41 @@ PROMPT='a clear glass perfume bottle with a silver cap, product shot'
 compare alpha-glass int8 1024 1024 transparent
 PROMPT='a full-bleed landscape photograph of a mountain lake at sunrise, the scene filling the whole frame edge to edge'
 compare alpha-scene int8 1024 1024 transparent
+
+# layers <name> <lane> <fixture> <layer_count|-> <resolution> [plan]: every layer and the composite, over GPP and in-process.
+layers() {
+  local name=$1 lane=$2 fixture=$3 count=$4 res=$5 plan=${6:-}
+  local params='{"outputs":["layers","composite"],"resolution":'$res
+  [[ $count != - ]] && params+=',"layer_count":'$count
+  params+='}'
+  local text=(); [[ -n $plan ]] && text=(--text "prompt=$plan")
+  $CHECK $B --operation image.decompose --model ming-image-layer --lane $lane --input image=$ROOT/fixtures/$fixture \
+    --params "$params" --seed 7 $text --models-root "$MODELS" --budget 64000000000 --timeout 1800 --session $OUT/$name.gpp \
+    > $OUT/$name-gpp.log 2>&1
+  mkdir -p $OUT/$name-gpp $OUT/$name-inproc
+  for f in $(grep -o '"path":"[^"]*"' $OUT/$name-gpp.log | sed 's/"path":"//; s/"$//; s/\\\//\//g' | sort -u); do cp $f $OUT/$name-gpp/; done
+  local args=(--decompose $ROOT/fixtures/$fixture --lane $lane --resolution $res --seed 7 --once --models-root "$MODELS" --out-dir $OUT/$name-inproc)
+  [[ $count != - ]] && args+=(--layers $count)
+  [[ -n $plan ]] && args+=(--plan "$plan")
+  $INPROC $args 2>> $LOG | tail -1 > $OUT/$name-inproc.json
+  local files=($OUT/$name-inproc/*.png(N:t)) bad=0 note=""
+  if (( ${#files} == 0 )) || [[ ! -f $OUT/$name-gpp/composite-0.png ]]; then
+    fail=$((fail+1)); say "FAIL  $name: missing outputs ($(ls $OUT/$name-gpp | tr '\n' ' ') / $(ls $OUT/$name-inproc | tr '\n' ' '))"; return
+  fi
+  [[ $(ls $OUT/$name-gpp | wc -l) -eq ${#files} ]] || { bad=1; note="file counts differ"; }
+  for f in $files; do
+    if ! cmp -s $OUT/$name-gpp/$f $OUT/$name-inproc/$f && ! $PIXDIFF $OUT/$name-gpp/$f $OUT/$name-inproc/$f >> $LOG 2>&1; then bad=1; note+=" $f differs"; fi
+  done
+  local effective=$(grep -o '"effective":{[^}]*}[^}]*}' $OUT/$name-gpp.log | head -1)
+  if (( bad )); then fail=$((fail+1)); say "FAIL  $name: $note"
+  else pass=$((pass+1)); say "PASS  $name ($lane, $fixture, layer_count $count, $res): ${#files} files byte- or pixel-identical; over GPP $(grep -o 'ran in [0-9.]* s' $OUT/$name-gpp.log | head -1), $effective; in-process $(cat $OUT/$name-inproc.json)"; fi
+}
+
+layers decompose-4 int8 poster-1024.png 4 1024
+layers decompose-int4 int4 poster-1024.png 4 512
+layers decompose-plan int8 poster-1024.png - 1024 'Decompose this image into 3 layers. Layer 1: the words "BLUE NOTE NIGHTS". Layer 2: the gold saxophone. Layer 3: the deep blue background.'
+layers decompose-draft int8 poster-1024.png 4 512
+layers decompose-wide int8 poster-1280x720.png 4 1024
 
 say "== $pass passed, $fail failed"
 exit $(( fail > 0 ))

@@ -207,20 +207,23 @@ let offerModel: JSONValue = [
 
 public let mingPlugin = GaeaPluginDefinition(
     id: "com.xocialize.gaea.ming-image",
-    version: "0.2.0",
+    version: "0.3.0",
     minGaea: "0.7.0",
     team: "CFZS6RXUCP",
     repo: "https://github.com/xocialize-code/gaea-plugin-ming-image",
     title: "Ming-Image",
-    summary: "inclusionAI Ming-Image 0.1 Design (MIT): a Ling-mini MoE MLLM conditioning a Z-Image-shaped DiT, for "
-        + "design work: posters, signage, layouts and text, in 1024² and 2048² buckets.",
+    summary: "inclusionAI Ming-Image 0.1 Design and Design-Layer (MIT): a Ling-mini MoE MLLM conditioning a Z-Image-shaped "
+        + "DiT, for design work (posters, signage, layouts and text, in 1024² and 2048² buckets) and for splitting a flat "
+        + "design into editable layers.",
     license: "Apache-2.0",
     executable: "gaea-ming-image-worker",
     models: [
         .engine(MingImageT2IPackage.self, id: modelID, title: "Ming-Image Design", lanes: lanes, operations: [generate]),
+        layerModel,
     ],
     offers: [
         PluginManifest.Offer(operation: "image.generate", profile: "image", model: offerModel, params: params,
                              defaults: ["count": 1],
                              limits: PluginManifest.Limits(maxPixels: maxPixels, minSide: 64, maxSide: 4096, sizeMultiple: 1)),
+        layerOffer,
     ])
