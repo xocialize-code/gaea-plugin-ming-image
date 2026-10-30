@@ -18,9 +18,9 @@ gaea plugins add https://github.com/xocialize-code/gaea-plugin-ming-image
 | `ming-image` | `image.generate` | standard, best | 12 steps without CFG (the reference's Design profile). Not a default: Gaea's routes don't change, so a request reaches it by naming it. |
 
 - **Sizes.** Ming-Image draws in two buckets, 1024² and 2048²: a request takes the smallest bucket that covers its
-  area, at that bucket's nearest aspect, resized to cover the requested aspect. The size drawn is reported in
-  `effective`, with `size_snapped` when it isn't the one asked (a 768×512 request comes back larger, at 3:2). Up to
-  2048² in area, at most 8:1.
+  area, at that bucket's nearest aspect, resized to cover the requested aspect: a 768×512 request is drawn at
+  1248×832. The worker reports the size drawn in `effective`, with `size_snapped`; Gaea then returns the size the
+  request asked for. Up to 2048² in area, at most 8:1.
 - **`count`**: 1–8 images, each with `seed + i`. A request without a seed gets one, reported in `effective`.
 - **Options**, as MES extensions: `x-ming.steps` (1–50) and `x-ming.guidance` (1–10, 1 turns CFG off).
 - **Negative prompts** do nothing (`negative_prompt_ignored`): the model conditions on the prompt alone.
@@ -71,7 +71,7 @@ scripts/golden.sh <out-dir>
 ```
 
 `golden.sh` runs three seeded jobs over GPP on the signed bundle and through `ming-inproc` and needs each pair the
-same: int8 at 1024², int8 at 1280×720, and int4 at 1024².
+same: int8 at 1024², int8 at 1280×720, int8 at 768×512 (drawn at 1248×832), and int4 at 1024².
 
 ## Licence
 

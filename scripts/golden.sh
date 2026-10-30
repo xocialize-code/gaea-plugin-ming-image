@@ -6,7 +6,8 @@
 #
 #   scripts/golden.sh <out-dir>     (after scripts/build-plugin.sh and `swift build -c release --product ming-inproc`)
 #
-# Cases: int8 (the default lane) at 1024², int8 at 1280×720 (drawn in the 1024² bucket at 16:9), and int4 at 1024².
+# Cases: int8 (the default lane) at 1024², int8 at 1280×720 (a bucket size), int8 at 768×512 (drawn at the 1024² bucket's
+# 1248×832), and int4 at 1024².
 set -uo pipefail
 ROOT=${0:A:h:h}
 cd $ROOT
@@ -43,6 +44,7 @@ compare() {
 PROMPT='a minimalist poster for a jazz festival, deep blue background, a gold saxophone, the words "BLUE NOTE NIGHTS" in bold white type at the top'
 compare square int8 1024 1024
 compare wide int8 1280 720
+compare snapped int8 768 512
 compare int4 int4 1024 1024
 
 say "== $pass passed, $fail failed"
