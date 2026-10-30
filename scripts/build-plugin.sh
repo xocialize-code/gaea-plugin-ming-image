@@ -33,9 +33,12 @@ REQUIREMENT="anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2
 
 step() { print -P "%B==> $*%b" }
 
+# The worker builds in a scratch folder of its own, so its bin folder holds only the resource bundles it links, not
+# the in-process reference's or the check tool's.
+SCRATCH=$ROOT/.build/plugin
 step "build $PRODUCT (release, arm64)"
-xcrun swift build -c release --arch arm64 --product $PRODUCT
-BIN=$(xcrun swift build -c release --arch arm64 --show-bin-path)
+xcrun swift build -c release --arch arm64 --product $PRODUCT --scratch-path $SCRATCH
+BIN=$(xcrun swift build -c release --arch arm64 --scratch-path $SCRATCH --show-bin-path)
 
 rm -rf $DIST && mkdir -p $DIST
 step "generate manifest.json from the plugin's code"
