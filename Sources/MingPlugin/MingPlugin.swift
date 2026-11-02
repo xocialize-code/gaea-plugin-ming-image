@@ -207,7 +207,7 @@ let offerModel: JSONValue = [
 
 public let mingPlugin = GaeaPluginDefinition(
     id: "com.xocialize.gaea.ming-image",
-    version: "0.3.0",
+    version: "0.3.1",
     minGaea: "0.7.0",
     team: "CFZS6RXUCP",
     repo: "https://github.com/xocialize-code/gaea-plugin-ming-image",
